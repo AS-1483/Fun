@@ -7,7 +7,7 @@ const { devices } = require("./devices");
 // ===================
 const TOKEN = "8221261457:AAFrXAUvBFbdc4TUFB3YlP8pkdl1oAefvP4"; 
 const OWNER_ID = 7434833085;       // আপনার Telegram ID
-const SERVER_URL = "https://fun-yy3s.onrender.com"; // Render live server
+const SERVER_URL = "https://fun-v0z4.onrender.com"; // Render live server
 
 // ===================
 // INIT BOT
