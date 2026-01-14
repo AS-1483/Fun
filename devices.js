@@ -1,27 +1,27 @@
-const devices = {};
+const devices = new Map();
 
-function registerDevice(id, name) {
-  devices[id] = {
+/*
+ device = {
+   id,
+   name,
+   lastPing
+ }
+*/
+
+function pingDevice(id, name) {
+  devices.set(id, {
     id,
     name,
-    online: true,
-    pendingLink: null,
-    screenshotRunning: false,
-    interval: 0
-  };
+    lastPing: Date.now()
+  });
 }
 
-function setOffline(id) {
-  if (devices[id]) devices[id].online = false;
+function getDevices() {
+  const now = Date.now();
+  return [...devices.values()].map(d => ({
+    ...d,
+    online: now - d.lastPing < 30000
+  }));
 }
 
-function heartbeat(id) {
-  if (devices[id]) devices[id].online = true;
-}
-
-module.exports = {
-  devices,
-  registerDevice,
-  setOffline,
-  heartbeat
-};
+module.exports = { pingDevice, getDevices };
