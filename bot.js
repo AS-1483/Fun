@@ -1,40 +1,65 @@
-const TelegramBot = require("node-telegram-bot-api");
-const axios = require("axios");
-const { devices } = require("./devices");
+const TelegramBot = require('node-telegram-bot-api');
+const { getDevices } = require('./devices');
 
-// ===================
-// CONFIGURATION
-// ===================
-const TOKEN = "8221261457:AAFrXAUvBFbdc4TUFB3YlP8pkdl1oAefvP4"; 
-const OWNER_ID = 7434833085;       // আপনার Telegram ID
-const SERVER_URL = "https://fun-v0z4.onrender.com"; // Render live server
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-// ===================
-// INIT BOT
-// ===================
-const bot = new TelegramBot(TOKEN, { polling: true });
+function deviceKeyboard() {
+  const buttons = getDevices().map(d => ([
+    { text: `${d.online ? '🟢' : '🔴'} ${d.name}`, callback_data: `device_${d.id}` }
+  ]));
 
-// ===================
-// /start command
-// ===================
-bot.onText(/\/start/, msg => {
-  if (msg.from.id !== OWNER_ID) return;
+  buttons.push([{ text: '⬅ Back', callback_data: 'back' }]);
 
-  const buttons = Object.values(devices)
-    .filter(d => d.online)
-    .map(d => [{ text: d.name, callback_data: `dev_${d.id}` }]);
+  return { reply_markup: { inline_keyboard: buttons } };
+}
 
-  bot.sendMessage(msg.chat.id, "📡 Online Devices", {
-    reply_markup: { inline_keyboard: buttons }
-  });
+bot.onText(/\/start/, (msg) => {
+  bot.sendMessage(msg.chat.id, '📱 Device Status', deviceKeyboard());
 });
 
-// ===================
-// Callback handler
-// ===================
-bot.on("callback_query", async query => {
-  if (query.from.id !== OWNER_ID) return;
+bot.on('callback_query', async (q) => {
+  const chatId = q.message.chat.id;
+  const data = q.data;
 
+  if (data === 'back') {
+    return bot.sendMessage(chatId, '📱 Device Status', deviceKeyboard());
+  }
+
+  if (data.startsWith('device_')) {
+    const deviceId = data.split('_')[1];
+
+    return bot.sendMessage(chatId, 'Choose Action', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔗 Open Link', callback_data: `open_${deviceId}` }],
+          [{ text: '📸 Screenshot (Demo)', callback_data: `shot_${deviceId}` }],
+          [{ text: '⬅ Back', callback_data: 'back' }]
+        ]
+      }
+    });
+  }
+
+  if (data.startsWith('open_')) {
+    bot.sendMessage(chatId, '🔗 Send URL now');
+    bot.once('message', (m) => {
+      bot.sendMessage(chatId, `✅ URL received:\n${m.text}`);
+    });
+  }
+
+  if (data.startsWith('shot_')) {
+    bot.sendMessage(chatId, '📸 Screenshot demo (no real capture)', {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '5 sec', callback_data: 'mock' }],
+          [{ text: '10 sec', callback_data: 'mock' }],
+          [{ text: 'Stop', callback_data: 'back' }]
+        ]
+      }
+    });
+  }
+});
+
+module.exports = bot;
   const chatId = query.message.chat.id;
   const data = query.data;
 
