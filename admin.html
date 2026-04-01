@@ -1,34 +1,215 @@
 <!DOCTYPE html>
-<html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Private Call with Child Voice</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #111; color: #fff; }
+        .container { max-width: 1200px; margin: auto; }
+        video { width: 100%; max-width: 640px; background: #000; border-radius: 8px; }
+        button, select { padding: 10px 15px; margin: 5px; font-size: 16px; cursor: pointer; }
+        .timer { font-size: 24px; font-weight: bold; margin: 10px 0; color: #0f0; }
+        .remote-video { margin-top: 20px; }
+        .voice-controls { background: #222; padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .status { color: #ffaa00; font-weight: bold; }
+        input[readonly] { background: #333; color: #fff; border: 1px solid #555; padding: 5px; }
+    </style>
+</head>
 <body>
-    <video id="remoteVideo" autoplay playsinline style="width:100%"></video>
-    <button id="callBtn">Start Call</button>
+    <div class="container">
+        <h1>🎤 অ্যাডমিন প্যানেল (শিশুর কণ্ঠ)</h1>
+        <div>
+            <button id="createRoomBtn">📞 নতুন কল শুরু করুন</button>
+            <div id="roomInfo" style="display:none;">
+                <p>লিংক শেয়ার করুন: <input type="text" id="shareLink" readonly style="width:350px;"> <button id="copyBtn">কপি</button></p>
+            </div>
+        </div>
+
+        <div class="voice-controls">
+            <h3>🎙️ ভয়েস চেঞ্জ (শুধু আপনার জন্য)</h3>
+            <select id="voiceEffect">
+                <option value="normal">স্বাভাবিক</option>
+                <option value="childVoice" selected>👶 শিশুর কণ্ঠ (Child Voice)</option>
+                <option value="fullDisguise">🔊 সম্পূর্ণ ছদ্মবেশ (অচেনা)</option>
+                <option value="robot">🤖 রোবট</option>
+                <option value="alien">👽 এলিয়েন</option>
+            </select>
+            <button id="applyEffectBtn">Apply</button>
+        </div>
+
+        <div class="remote-video">
+            <h3>👩 গার্লফ্রেন্ডের ভিডিও</h3>
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+
+        <div>
+            <h3>⏱️ কলের সময়</h3>
+            <div class="timer" id="timer">00:00</div>
+            <div class="status" id="callStatus">অপেক্ষারত...</div>
+        </div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let pc;
-        let roomId;
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let peerConnection;
+        let localStream;
+        let processedStream;
+        let roomId = null;
+        let timerInterval = null;
+        let callStartTime = 0;
 
-        document.getElementById('callBtn').onclick = async () => {
-            roomId = 'test_' + Math.random();
+        const createBtn = document.getElementById('createRoomBtn');
+        const roomInfoDiv = document.getElementById('roomInfo');
+        const shareLinkInput = document.getElementById('shareLink');
+        const copyBtn = document.getElementById('copyBtn');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const timerDiv = document.getElementById('timer');
+        const callStatusDiv = document.getElementById('callStatus');
+        const voiceEffectSelect = document.getElementById('voiceEffect');
+        const applyEffectBtn = document.getElementById('applyEffectBtn');
+
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        // ---------- অডিও ইফেক্ট ইঞ্জিন ----------
+        let audioContext;
+        let sourceNode;
+
+        async function applyVoiceEffect(effect) {
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (!localStream) return;
+
+            if (sourceNode) sourceNode.disconnect();
+            sourceNode = audioContext.createMediaStreamSource(localStream);
+            const outputNode = audioContext.createMediaStreamDestination();
+
+            if (effect === 'childVoice' || effect === 'fullDisguise' || effect === 'alien') {
+                const pitch = effect === 'childVoice' ? 1.6 : (effect === 'alien' ? 2.0 : 1.8);
+                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+                let index = 0;
+                scriptNode.onaudioprocess = (event) => {
+                    const input = event.inputBuffer.getChannelData(0);
+                    const output = event.outputBuffer.getChannelData(0);
+                    for (let i = 0; i < input.length; i++) {
+                        let pos = index * pitch;
+                        let posInt = Math.floor(pos);
+                        let frac = pos - posInt;
+                        if (posInt >= input.length - 1) { posInt = 0; index = 0; }
+                        output[i] = (input[posInt] * (1 - frac) + input[posInt + 1] * frac);
+                        index++;
+                    }
+                };
+                sourceNode.connect(scriptNode);
+                scriptNode.connect(outputNode);
+            } else if (effect === 'robot') {
+                const biquad = audioContext.createBiquadFilter();
+                biquad.type = 'bandpass';
+                biquad.frequency.value = 1000;
+                sourceNode.connect(biquad);
+                biquad.connect(outputNode);
+            } else {
+                sourceNode.connect(outputNode);
+            }
+
+            processedStream = outputNode.stream;
+            
+            // Call চলকালীন সময়ে ইফেক্ট চেঞ্জ করলে ট্র্যাক আপডেট করা
+            if (peerConnection) {
+                const sender = peerConnection.getSenders().find(s => s.track.kind === 'audio');
+                if (sender) sender.replaceTrack(processedStream.getAudioTracks()[0]);
+            }
+        }
+
+        // ---------- WebRTC ফাংশন ----------
+        async function createPeerConnection() {
+            peerConnection = new RTCPeerConnection(configuration);
+            
+            if (processedStream) {
+                processedStream.getTracks().forEach(track => peerConnection.addTrack(track, processedStream));
+            }
+
+            peerConnection.ontrack = (event) => {
+                if (event.streams && event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                }
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) socket.emit('ice-candidate', { roomId, candidate: event.candidate });
+            };
+
+            peerConnection.onconnectionstatechange = () => {
+                if (peerConnection.connectionState === 'connected') {
+                    startTimer();
+                    callStatusDiv.innerText = 'সংযুক্ত - কথা বলছেন';
+                } else if (peerConnection.connectionState === 'disconnected') {
+                    stopTimer();
+                    callStatusDiv.innerText = 'সংযোগ বিচ্ছিন্ন';
+                }
+            };
+        }
+
+        function startTimer() {
+            callStartTime = Date.now();
+            timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - callStartTime) / 1000);
+                const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                const s = (elapsed % 60).toString().padStart(2, '0');
+                timerDiv.innerText = `${m}:${s}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+        }
+
+        createBtn.onclick = async () => {
+            roomId = 'room_' + Math.random().toString(36).substr(2, 8);
             socket.emit('create-room', roomId, async (res) => {
                 if (res.success) {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                    pc = new RTCPeerConnection(config);
-                    stream.getTracks().forEach(t => pc.addTrack(t, stream));
-                    pc.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
-                    pc.onicecandidate = e => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socket.emit('offer', { roomId, offer });
-                    alert('Share link: ' + location.origin + '/join.html?room=' + roomId);
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                        await applyVoiceEffect('childVoice');
+                        
+                        const link = `${window.location.origin}/join.html?room=${roomId}`;
+                        shareLinkInput.value = link;
+                        roomInfoDiv.style.display = 'block';
+                        createBtn.disabled = true;
+                        callStatusDiv.innerText = 'গার্লফ্রেন্ডের অপেক্ষায়...';
+                    } catch (e) { alert('মাইক পারমিশন দিন!'); }
                 }
             });
         };
 
-        socket.on('answer', async (answer) => { await pc.setRemoteDescription(new RTCSessionDescription(answer)); });
-        socket.on('ice-candidate', async (c) => { await pc.addIceCandidate(new RTCIceCandidate(c)); });
+        // যখন মেম্বার জয়েন করবে, তখন অফার পাঠানো হবে
+        socket.on('member-joined', async () => {
+            callStatusDiv.innerText = 'মেম্বার পাওয়া গেছে, কানেক্ট হচ্ছে...';
+            await createPeerConnection();
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('offer', { roomId, offer });
+        });
+
+        socket.on('answer', async (answer) => {
+            if (peerConnection) await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        });
+
+        socket.on('ice-candidate', async (candidate) => {
+            if (peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        socket.on('member-left', () => {
+            stopTimer();
+            callStatusDiv.innerText = 'গার্লফ্রেন্ড কল কেটে দিয়েছে';
+            if (peerConnection) peerConnection.close();
+            createBtn.disabled = false;
+        });
+
+        applyEffectBtn.onclick = () => applyVoiceEffect(voiceEffectSelect.value);
+        copyBtn.onclick = () => { shareLinkInput.select(); document.execCommand('copy'); alert('লিংক কপি হয়েছে!'); };
     </script>
 </body>
 </html>
