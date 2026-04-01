@@ -1,306 +1,34 @@
 <!DOCTYPE html>
-<html lang="bn">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Panel - Private Call with Child Voice</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            background: #111;
-            color: #fff;
-        }
-        .container { max-width: 1200px; margin: auto; }
-        video { width: 100%; max-width: 640px; background: #000; border-radius: 8px; }
-        button, select { padding: 10px 15px; margin: 5px; font-size: 16px; cursor: pointer; }
-        .timer { font-size: 24px; font-weight: bold; margin: 10px 0; color: #0f0; }
-        .remote-video { margin-top: 20px; }
-        .voice-controls { background: #222; padding: 15px; border-radius: 8px; margin: 15px 0; }
-        .status { color: #ffaa00; }
-    </style>
-</head>
+<html>
 <body>
-    <div class="container">
-        <h1>🎤 অ্যাডমিন প্যানেল (শিশুর কণ্ঠ)</h1>
-        <div>
-            <button id="createRoomBtn">📞 নতুন কল শুরু করুন</button>
-            <div id="roomInfo" style="display:none;">
-                <p>লিংক শেয়ার করুন: <input type="text" id="shareLink" readonly style="width:300px;"> <button id="copyBtn">কপি</button></p>
-            </div>
-        </div>
-
-        <div class="voice-controls">
-            <h3>🎙️ ভয়েস চেঞ্জ (শুধু আপনার জন্য)</h3>
-            <select id="voiceEffect">
-                <option value="normal">স্বাভাবিক</option>
-                <option value="childVoice" selected>👶 শিশুর কণ্ঠ (Child Voice)</option>
-                <option value="fullDisguise">🔊 সম্পূর্ণ ছদ্মবেশ (অচেনা)</option>
-                <option value="robot">🤖 রোবট</option>
-                <option value="alien">👽 এলিয়েন</option>
-            </select>
-            <button id="applyEffectBtn">Apply</button>
-        </div>
-
-        <div class="remote-video">
-            <h3>👩 গার্লফ্রেন্ডের ভিডিও</h3>
-            <video id="remoteVideo" autoplay playsinline></video>
-        </div>
-
-        <div>
-            <h3>⏱️ কলের সময়</h3>
-            <div class="timer" id="timer">00:00</div>
-            <div class="status" id="callStatus">অপেক্ষারত...</div>
-        </div>
-    </div>
-
+    <video id="remoteVideo" autoplay playsinline style="width:100%"></video>
+    <button id="callBtn">Start Call</button>
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
+        let pc;
+        let roomId;
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-        let peerConnection;
-        let localStream;
-        let remoteStream = new MediaStream();
-        let roomId = null;
-        let callStartTime = 0;
-        let totalPaused = 0;
-        let timerInterval = null;
-        let isConnected = false;
-
-        const createBtn = document.getElementById('createRoomBtn');
-        const roomInfoDiv = document.getElementById('roomInfo');
-        const shareLinkInput = document.getElementById('shareLink');
-        const copyBtn = document.getElementById('copyBtn');
-        const remoteVideo = document.getElementById('remoteVideo');
-        const timerDiv = document.getElementById('timer');
-        const callStatusDiv = document.getElementById('callStatus');
-        const voiceEffectSelect = document.getElementById('voiceEffect');
-        const applyEffectBtn = document.getElementById('applyEffectBtn');
-
-        const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-
-        // ---------- অডিও ইফেক্ট (পিচ শিফট) ----------
-        let audioContext;
-        let sourceNode;
-        let processedStream;
-        let currentEffect = 'childVoice';  // ডিফল্ট শিশুর কণ্ঠ
-
-        async function applyVoiceEffect(effect) {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (!localStream) return;
-
-            if (sourceNode) sourceNode.disconnect();
-            sourceNode = audioContext.createMediaStreamSource(localStream);
-            const outputNode = audioContext.createMediaStreamDestination();
-
-            currentEffect = effect;
-
-            if (effect === 'childVoice') {
-                // পিচ শিফট: 1.6 গুণ (শিশুর কণ্ঠ)
-                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-                let index = 0;
-                const pitch = 1.6;   // 1.5 - 1.8 ভালো মান
-                scriptNode.onaudioprocess = (event) => {
-                    const input = event.inputBuffer.getChannelData(0);
-                    const output = event.outputBuffer.getChannelData(0);
-                    for (let i = 0; i < input.length; i++) {
-                        let pos = index * pitch;
-                        let posInt = Math.floor(pos);
-                        let frac = pos - posInt;
-                        if (posInt >= input.length - 1) {
-                            posInt = 0;
-                            index = 0;
-                        }
-                        output[i] = (input[posInt] * (1 - frac) + input[posInt + 1] * frac);
-                        index++;
-                    }
-                };
-                sourceNode.connect(scriptNode);
-                scriptNode.connect(outputNode);
-                processedStream = outputNode.stream;
-            }
-            else if (effect === 'robot') {
-                // সরল রোবট: বিটক্রাশার + ফিল্টার
-                const gain = audioContext.createGain();
-                gain.gain.value = 0.5;
-                const filter = audioContext.createBiquadFilter();
-                filter.type = 'bandpass';
-                filter.frequency.value = 1000;
-                filter.Q.value = 10;
-                const waveshaper = audioContext.createWaveShaper();
-                const curve = new Float32Array(256);
-                for (let i = 0; i < 256; i++) {
-                    let x = (i - 128) / 128;
-                    curve[i] = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * 2));
+        document.getElementById('callBtn').onclick = async () => {
+            roomId = 'test_' + Math.random();
+            socket.emit('create-room', roomId, async (res) => {
+                if (res.success) {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                    pc = new RTCPeerConnection(config);
+                    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                    pc.ontrack = e => document.getElementById('remoteVideo').srcObject = e.streams[0];
+                    pc.onicecandidate = e => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    socket.emit('offer', { roomId, offer });
+                    alert('Share link: ' + location.origin + '/join.html?room=' + roomId);
                 }
-                waveshaper.curve = curve;
-                sourceNode.connect(gain);
-                gain.connect(filter);
-                filter.connect(waveshaper);
-                waveshaper.connect(outputNode);
-                processedStream = outputNode.stream;
-            }
-            else if (effect === 'alien') {
-                // এলিয়েন: পিচ আপ + ফিল্টার
-                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-                let index = 0;
-                const pitch = 2.0;
-                scriptNode.onaudioprocess = (event) => {
-                    const input = event.inputBuffer.getChannelData(0);
-                    const output = event.outputBuffer.getChannelData(0);
-                    for (let i = 0; i < input.length; i++) {
-                        let pos = index * pitch;
-                        let posInt = Math.floor(pos);
-                        let frac = pos - posInt;
-                        if (posInt >= input.length - 1) {
-                            posInt = 0;
-                            index = 0;
-                        }
-                        output[i] = (input[posInt] * (1 - frac) + input[posInt + 1] * frac);
-                        index++;
-                    }
-                };
-                const filter = audioContext.createBiquadFilter();
-                filter.type = 'bandpass';
-                filter.frequency.value = 1800;
-                filter.Q.value = 5;
-                sourceNode.connect(scriptNode);
-                scriptNode.connect(filter);
-                filter.connect(outputNode);
-                processedStream = outputNode.stream;
-            }
-            else if (effect === 'fullDisguise') {
-                // সম্পূর্ণ ছদ্মবেশ: পিচ + রোবট
-                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
-                let index = 0;
-                const pitch = 1.8;
-                scriptNode.onaudioprocess = (event) => {
-                    const input = event.inputBuffer.getChannelData(0);
-                    const output = event.outputBuffer.getChannelData(0);
-                    for (let i = 0; i < input.length; i++) {
-                        let pos = index * pitch;
-                        let posInt = Math.floor(pos);
-                        let frac = pos - posInt;
-                        if (posInt >= input.length - 1) {
-                            posInt = 0;
-                            index = 0;
-                        }
-                        output[i] = (input[posInt] * (1 - frac) + input[posInt + 1] * frac);
-                        index++;
-                    }
-                };
-                const waveshaper = audioContext.createWaveShaper();
-                const curve = new Float32Array(256);
-                for (let i = 0; i < 256; i++) {
-                    let x = (i - 128) / 128;
-                    curve[i] = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * 1.5));
-                }
-                waveshaper.curve = curve;
-                sourceNode.connect(scriptNode);
-                scriptNode.connect(waveshaper);
-                waveshaper.connect(outputNode);
-                processedStream = outputNode.stream;
-            }
-            else {
-                // স্বাভাবিক
-                sourceNode.connect(outputNode);
-                processedStream = outputNode.stream;
-            }
-
-            // RTCPeerConnection-এ ট্র্যাক আপডেট
-            if (peerConnection && peerConnection.getSenders().length) {
-                const audioSender = peerConnection.getSenders().find(s => s.track.kind === 'audio');
-                if (audioSender && processedStream.getAudioTracks()[0]) {
-                    audioSender.replaceTrack(processedStream.getAudioTracks()[0]);
-                }
-            }
-        }
-
-        // ---------- WebRTC ফাংশন ----------
-        async function createPeerConnection(isAdmin) {
-            peerConnection = new RTCPeerConnection(configuration);
-            if (isAdmin && processedStream) {
-                processedStream.getTracks().forEach(track => peerConnection.addTrack(track, processedStream));
-            }
-            peerConnection.ontrack = (event) => {
-                remoteStream.addTrack(event.track);
-                if (event.track.kind === 'video') remoteVideo.srcObject = remoteStream;
-            };
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) socket.emit('ice-candidate', { roomId, candidate: event.candidate });
-            };
-            peerConnection.onconnectionstatechange = () => {
-                if (peerConnection.connectionState === 'connected') {
-                    if (!isConnected) { isConnected = true; startTimer(); callStatusDiv.innerText = 'সংযুক্ত - কথা বলছেন'; }
-                } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
-                    if (isConnected) { isConnected = false; pauseTimer(); callStatusDiv.innerText = 'সংযোগ বিচ্ছিন্ন'; }
-                } else if (peerConnection.connectionState === 'closed') { resetTimer(); }
-            };
-            return peerConnection;
-        }
-
-        function startTimer() {
-            if (timerInterval) clearInterval(timerInterval);
-            callStartTime = Date.now() - totalPaused;
-            timerInterval = setInterval(() => {
-                const elapsed = Date.now() - callStartTime;
-                const minutes = Math.floor(elapsed / 60000);
-                const seconds = Math.floor((elapsed % 60000) / 1000);
-                timerDiv.innerText = `${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
-            }, 1000);
-        }
-        function pauseTimer() {
-            if (timerInterval) {
-                clearInterval(timerInterval);
-                timerInterval = null;
-                totalPaused = Date.now() - callStartTime;
-            }
-        }
-        function resetTimer() {
-            if (timerInterval) clearInterval(timerInterval);
-            totalPaused = 0;
-            timerDiv.innerText = '00:00';
-            isConnected = false;
-        }
-
-        createBtn.onclick = async () => {
-            roomId = 'room_' + Math.random().toString(36).substr(2, 8);
-            socket.emit('create-room', roomId, async (response) => {
-                if (response.success) {
-                    try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                        // ডিফল্ট শিশুর কণ্ঠ সেট
-                        await applyVoiceEffect('childVoice');
-                        voiceEffectSelect.value = 'childVoice';
-                        await createPeerConnection(true);
-                        const offer = await peerConnection.createOffer();
-                        await peerConnection.setLocalDescription(offer);
-                        socket.emit('offer', { roomId, offer });
-                        const link = `${window.location.origin}/join.html?room=${roomId}`;
-                        shareLinkInput.value = link;
-                        roomInfoDiv.style.display = 'block';
-                        createBtn.disabled = true;
-                        callStatusDiv.innerText = 'গার্লফ্রেন্ডের অপেক্ষায়...';
-                    } catch (err) { console.error(err); alert('মাইক অনুমতি প্রয়োজন'); }
-                } else alert('রুম তৈরি ব্যর্থ');
             });
         };
 
-        applyEffectBtn.onclick = () => { applyVoiceEffect(voiceEffectSelect.value); };
-        copyBtn.onclick = () => { shareLinkInput.select(); document.execCommand('copy'); alert('লিংক কপি হয়েছে'); };
-
-        socket.on('member-joined', () => { callStatusDiv.innerText = 'গার্লফ্রেন্ড সংযুক্ত হচ্ছে...'; });
-        socket.on('member-left', () => { pauseTimer(); callStatusDiv.innerText = 'গার্লফ্রেন্ড চলে গেছে'; if (peerConnection) peerConnection.close(); resetTimer(); createBtn.disabled = false; roomInfoDiv.style.display = 'none'; });
-        socket.on('answer', async (answer) => { if (peerConnection) await peerConnection.setRemoteDescription(new RTCSessionDescription(answer)); });
-        socket.on('ice-candidate', async (candidate) => { if (peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); });
-        socket.on('admin-left', () => { callStatusDiv.innerText = 'অ্যাডমিন কল শেষ করেছেন'; if (peerConnection) peerConnection.close(); resetTimer(); });
+        socket.on('answer', async (answer) => { await pc.setRemoteDescription(new RTCSessionDescription(answer)); });
+        socket.on('ice-candidate', async (c) => { await pc.addIceCandidate(new RTCIceCandidate(c)); });
     </script>
 </body>
 </html>
