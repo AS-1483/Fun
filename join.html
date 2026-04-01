@@ -1,130 +1,30 @@
 <!DOCTYPE html>
-<html lang="bn">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Incoming Call - Sabbir</title>
-    <style>
-        body {
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            color: white;
-            text-align: center;
-        }
-        .card {
-            background: rgba(0,0,0,0.7);
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-            max-width: 400px;
-            width: 90%;
-        }
-        h1 { font-size: 2rem; margin-bottom: 20px; }
-        .btn-receive {
-            background-color: #4CAF50;
-            border: none;
-            color: white;
-            padding: 15px 32px;
-            font-size: 20px;
-            font-weight: bold;
-            margin: 20px 0;
-            border-radius: 50px;
-            cursor: pointer;
-            width: 80%;
-        }
-        .btn-receive:hover { background-color: #45a049; transform: scale(1.02); }
-        .status { margin-top: 20px; font-size: 18px; background: #333; padding: 10px; border-radius: 8px; }
-        video { display: none; }
-    </style>
-</head>
+<html>
 <body>
-    <div class="card">
-        <h1>📞 Sabbir তোমাকে কল দিচ্ছে</h1>
-        <button class="btn-receive" id="receiveBtn">✅ কল রিসিভ করুন</button>
-        <div class="status" id="callStatus">কল রিসিভ করার জন্য বাটনে ক্লিক করুন</div>
-    </div>
-
+    <button id="answerBtn">Receive Call</button>
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
-        let peerConnection;
-        let localStream;
-        let roomId = null;
-        const receiveBtn = document.getElementById('receiveBtn');
-        const callStatusDiv = document.getElementById('callStatus');
-
         const urlParams = new URLSearchParams(window.location.search);
-        roomId = urlParams.get('room');
-        if (!roomId) {
-            callStatusDiv.innerText = 'ভুল লিংক! অ্যাডমিনের সাথে যোগাযোগ করুন।';
-            receiveBtn.disabled = true;
-        }
+        const roomId = urlParams.get('room');
+        const socket = io();
+        let pc;
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-        async function createPeerConnection() {
-            peerConnection = new RTCPeerConnection(configuration);
-            if (localStream) localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-            peerConnection.ontrack = (event) => {
-                if (event.track.kind === 'audio') {
-                    const audio = new Audio();
-                    audio.srcObject = new MediaStream([event.track]);
-                    audio.play();
-                }
-            };
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) socket.emit('ice-candidate', { roomId, candidate: event.candidate });
-            };
-            peerConnection.onconnectionstatechange = () => {
-                if (peerConnection.connectionState === 'connected') callStatusDiv.innerText = 'কল সংযুক্ত - কথা বলুন';
-                else if (peerConnection.connectionState === 'disconnected') callStatusDiv.innerText = 'সংযোগ বিচ্ছিন্ন হয়েছে';
-            };
-            return peerConnection;
-        }
-
-        receiveBtn.onclick = async () => {
-            receiveBtn.disabled = true;
-            receiveBtn.innerText = 'অনুমতি নিচ্ছি...';
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                callStatusDiv.innerText = 'অনুমতি প্রাপ্ত, কল সংযোগ হচ্ছে...';
-                await createPeerConnection();
-                socket.emit('join-room', roomId, (response) => {
-                    if (!response.success) {
-                        callStatusDiv.innerText = 'রুম জয়েন ব্যর্থ: ' + response.message;
-                        receiveBtn.disabled = false;
-                        receiveBtn.innerText = '✅ কল রিসিভ করুন';
-                    }
-                });
-            } catch (err) {
-                console.error(err);
-                callStatusDiv.innerText = 'মাইক বা ক্যামেরা অনুমতি প্রয়োজন';
-                receiveBtn.disabled = false;
-                receiveBtn.innerText = '✅ কল রিসিভ করুন';
-            }
+        document.getElementById('answerBtn').onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            pc = new RTCPeerConnection(config);
+            stream.getTracks().forEach(t => pc.addTrack(t, stream));
+            pc.onicecandidate = e => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+            socket.emit('join-room', roomId, (res) => { if (!res.success) alert('Join failed'); });
         };
 
         socket.on('offer', async (offer) => {
-            if (peerConnection) {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                socket.emit('answer', { roomId, answer });
-            }
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('answer', { roomId, answer });
         });
-        socket.on('ice-candidate', async (candidate) => {
-            if (peerConnection) await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        });
-        socket.on('admin-left', () => {
-            callStatusDiv.innerText = 'অ্যাডমিন কল শেষ করেছেন';
-            if (peerConnection) peerConnection.close();
-            receiveBtn.disabled = true;
-        });
+        socket.on('ice-candidate', async (c) => { await pc.addIceCandidate(new RTCIceCandidate(c)); });
     </script>
 </body>
 </html>
