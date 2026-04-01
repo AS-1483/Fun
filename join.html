@@ -2,18 +2,21 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Incoming Call</title>
     <style>
-        body { background: #1e3c72; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center; }
-        .card { background: rgba(0,0,0,0.5); padding: 30px; border-radius: 15px; }
-        button { background: #28a745; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        body { background: #1e3c72; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: rgba(0,0,0,0.6); padding: 30px; border-radius: 20px; text-align: center; width: 90%; max-width: 350px; }
+        button { background: #28a745; color: white; padding: 15px 30px; border: none; border-radius: 30px; font-size: 18px; cursor: pointer; width: 100%; }
+        video { width: 100%; border-radius: 10px; margin-top: 15px; background: #000; display: none; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>📞 Sabbir তোমাকে কল দিচ্ছে</h1>
+        <h2>📞 Sabbir কল দিচ্ছে...</h2>
         <button id="joinBtn">✅ কল রিসিভ করুন</button>
-        <p id="status">বাটনে ক্লিক করুন</p>
+        <p id="statusText">বাটনে ক্লিক করুন</p>
+        <video id="localVideo" autoplay playsinline muted></video>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -23,30 +26,40 @@
         const roomId = new URLSearchParams(window.location.search).get('room');
 
         document.getElementById('joinBtn').onclick = async () => {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-            socket.emit('join-room', roomId, (res) => {
-                if (res.success) document.getElementById('status').innerText = 'কানেক্ট হচ্ছে...';
-                else alert(res.message);
-            });
+            try {
+                // Mobile camera fixed constraints
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: { facingMode: "user" } 
+                });
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('localVideo').style.display = 'block';
+                
+                socket.emit('join-room', roomId, (res) => {
+                    if (res.success) document.getElementById('statusText').innerText = 'সংযুক্ত হচ্ছে...';
+                    else alert(res.message);
+                });
+            } catch (e) { alert('ক্যামেরা বা মাইক পারমিশন দিন!'); }
         };
 
         socket.on('offer', async (offer) => {
             peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
-            peerConnection.onicecandidate = (e) => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+            
             peerConnection.ontrack = (e) => {
                 const audio = new Audio();
                 audio.srcObject = e.streams[0];
                 audio.play();
             };
-            
+            peerConnection.onicecandidate = (e) => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
+
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             socket.emit('answer', { roomId, answer });
         });
 
-        socket.on('ice-candidate', (can) => peerConnection.addIceCandidate(new RTCIceCandidate(can)));
+        socket.on('ice-candidate', (can) => peerConnection && peerConnection.addIceCandidate(new RTCIceCandidate(can)));
     </script>
 </body>
 </html>
