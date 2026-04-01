@@ -2,35 +2,40 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
-    <title>Admin Panel - Child Voice Call</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>Admin - Child Voice</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #111; color: #fff; padding: 20px; }
-        video { width: 100%; max-width: 400px; background: #000; border-radius: 10px; }
-        .controls { background: #222; padding: 15px; border-radius: 8px; margin: 15px 0; }
-        .timer { font-size: 24px; color: #0f0; margin: 10px 0; }
-        .status { color: #ffaa00; }
+        body { font-family: sans-serif; background: #111; color: #fff; margin: 0; padding: 15px; display: flex; flex-direction: column; align-items: center; }
+        .box { width: 100%; max-width: 400px; background: #222; padding: 15px; border-radius: 15px; text-align: center; margin-bottom: 10px; }
+        button { width: 100%; padding: 12px; margin: 5px 0; border-radius: 25px; border: none; font-weight: bold; cursor: pointer; }
+        #createRoomBtn { background: #28a745; color: #fff; }
+        video { width: 100%; border-radius: 10px; background: #000; margin-top: 10px; display: none; }
+        #shareLink { width: 70%; padding: 8px; border-radius: 5px; border: none; }
+        .timer { font-size: 20px; color: #0f0; margin: 10px 0; }
     </style>
 </head>
 <body>
-    <h1>🎤 অ্যাডমিন প্যানেল</h1>
-    <button id="createRoomBtn">📞 কল শুরু করুন</button>
-    <div id="roomInfo" style="display:none;">
-        <p>লিংক: <input type="text" id="shareLink" readonly style="width:300px;"> <button id="copyBtn">কপি</button></p>
+    <div class="box">
+        <h3>🎤 অ্যাডমিন কন্ট্রোল</h3>
+        <button id="createRoomBtn">📞 নতুন কল শুরু করুন</button>
+        <div id="roomInfo" style="display:none;">
+            <input type="text" id="shareLink" readonly>
+            <button id="copyBtn" style="width:25%; display:inline;">কপি</button>
+        </div>
     </div>
 
-    <div class="controls">
-        <h3>🎙️ ভয়েস ইফেক্ট</h3>
-        <select id="voiceEffect">
-            <option value="normal">Normal</option>
-            <option value="childVoice" selected>Child Voice</option>
-            <option value="robot">Robot</option>
+    <div class="box">
+        <select id="voiceEffect" style="width:100%; padding: 10px; border-radius: 5px;">
+            <option value="child">👶 শিশুর কণ্ঠ (Normal Speed)</option>
+            <option value="normal">স্বাভাবিক কণ্ঠ</option>
         </select>
-        <button id="applyBtn">Apply</button>
     </div>
 
-    <video id="remoteVideo" autoplay playsinline></video>
-    <div class="timer" id="timer">00:00</div>
-    <div class="status" id="callStatus">অপেক্ষারত...</div>
+    <div class="box">
+        <div class="timer" id="timer">00:00</div>
+        <div id="status">অপেক্ষারত...</div>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -38,38 +43,39 @@
         let peerConnection, localStream, processedStream, roomId;
         const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-        // Audio Effect Logic
-        async function setupVoice(effect) {
+        async function applyEffect(stream) {
             const ctx = new AudioContext();
-            const source = ctx.createMediaStreamSource(localStream);
+            const source = ctx.createMediaStreamSource(stream);
             const destination = ctx.createMediaStreamDestination();
-            
-            if (effect === 'childVoice') {
-                const processor = ctx.createScriptProcessor(4096, 1, 1);
-                processor.onaudioprocess = (e) => {
-                    const inData = e.inputBuffer.getChannelData(0);
-                    const outData = e.outputBuffer.getChannelData(0);
-                    for (let i = 0; i < inData.length; i++) {
-                        let pos = Math.floor(i * 1.6) % inData.length;
-                        outData[i] = inData[pos];
-                    }
-                };
-                source.connect(processor);
-                processor.connect(destination);
-            } else { source.connect(destination); }
-            
-            processedStream = destination.stream;
+            const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+            let offset = 0;
+            processor.onaudioprocess = (e) => {
+                const input = e.inputBuffer.getChannelData(0);
+                const output = e.outputBuffer.getChannelData(0);
+                const pitch = document.getElementById('voiceEffect').value === 'child' ? 1.45 : 1.0;
+                
+                for (let i = 0; i < input.length; i++) {
+                    let index = Math.floor(i * pitch + offset) % input.length;
+                    output[i] = input[index];
+                }
+                offset = (offset + input.length * (pitch - 1)) % input.length;
+            };
+
+            source.connect(processor);
+            processor.connect(destination);
+            return destination.stream;
         }
 
         document.getElementById('createRoomBtn').onclick = async () => {
-            roomId = 'room_' + Math.random().toString(36).substr(2, 8);
+            roomId = 'room_' + Math.random().toString(36).substr(2, 7);
             socket.emit('create-room', roomId, async (res) => {
                 if (res.success) {
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    await setupVoice('childVoice');
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true }, video: false });
+                    processedStream = await applyEffect(localStream);
                     document.getElementById('shareLink').value = `${window.location.origin}/join.html?room=${roomId}`;
                     document.getElementById('roomInfo').style.display = 'block';
-                    document.getElementById('callStatus').innerText = 'মেম্বারের জন্য অপেক্ষা করা হচ্ছে...';
+                    document.getElementById('status').innerText = 'লিংক পাঠিয়ে অপেক্ষা করুন...';
                 }
             });
         };
@@ -77,17 +83,22 @@
         socket.on('member-joined', async () => {
             peerConnection = new RTCPeerConnection(config);
             processedStream.getTracks().forEach(t => peerConnection.addTrack(t, processedStream));
+            peerConnection.ontrack = (e) => {
+                const video = document.getElementById('remoteVideo');
+                video.srcObject = e.streams[0];
+                video.style.display = 'block';
+            };
             peerConnection.onicecandidate = (e) => e.candidate && socket.emit('ice-candidate', { roomId, candidate: e.candidate });
-            peerConnection.ontrack = (e) => document.getElementById('remoteVideo').srcObject = e.streams[0];
             
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             socket.emit('offer', { roomId, offer });
-            document.getElementById('callStatus').innerText = 'সংযুক্ত';
+            document.getElementById('status').innerText = 'কল সংযুক্ত';
         });
 
         socket.on('answer', (ans) => peerConnection.setRemoteDescription(new RTCSessionDescription(ans)));
         socket.on('ice-candidate', (can) => peerConnection.addIceCandidate(new RTCIceCandidate(can)));
+        document.getElementById('copyBtn').onclick = () => { document.getElementById('shareLink').select(); document.execCommand('copy'); alert('লিংক কপি হয়েছে'); };
     </script>
 </body>
 </html>
