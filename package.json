@@ -1,14 +1,13 @@
 {
-  "name": "telegram-control-server",
+  "name": "private-call",
   "version": "1.0.0",
-  "type": "commonjs",
-  "main": "index.js",
+  "description": "Private call with voice change",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "node-telegram-bot-api": "^0.61.0",
-    "uuid": "^9.0.1"
+    "express": "^4.18.2",
+    "socket.io": "^4.5.4"
   }
 }
