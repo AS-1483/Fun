@@ -28,15 +28,15 @@ io.on('connection', (socket) => {
       socket.data.roomId = roomId;
       socket.data.role = 'member';
       callback({ success: true });
-      io.to(room.admin).emit('member-joined'); // Admin-ke offer trigger korte bole
+      io.to(room.admin).emit('member-joined');
     } else {
-      callback({ success: false, message: room ? 'রুম ফুল' : 'রুম পাওয়া যায়নি' });
+      callback({ success: false, message: room ? 'Room Full' : 'Room Not Found' });
     }
   });
 
-  socket.on('offer', ({ roomId, offer }) => socket.to(roomId).emit('offer', offer));
-  socket.on('answer', ({ roomId, answer }) => socket.to(roomId).emit('answer', answer));
-  socket.on('ice-candidate', ({ roomId, candidate }) => socket.to(roomId).emit('ice-candidate', candidate));
+  socket.on('offer', (data) => socket.to(data.roomId).emit('offer', data.offer));
+  socket.on('answer', (data) => socket.to(data.roomId).emit('answer', data.answer));
+  socket.on('ice-candidate', (data) => socket.to(data.roomId).emit('ice-candidate', data.candidate));
 
   socket.on('disconnect', () => {
     const { roomId, role } = socket.data;
